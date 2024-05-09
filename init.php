@@ -1,6 +1,6 @@
 <?php
 	$DBHost  = "localhost";
-	$DBName  = "landers_sms_play";
+	$DBName  = "epldt_landers_abandoned_cart";
 	$charset = "utf8";
 
 	$DSN   ="mysql: host=$DBHost; dbname=$DBName; charset=$charset";

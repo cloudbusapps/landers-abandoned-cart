@@ -49,6 +49,11 @@ REQUIRED: subcriber_key, email_address
                 "error_message": "Required Event Data fields are missing: [fields]"
             }
         ]
+    },
+    "execution": {
+        "started": "2023-01-01 01:00:00",
+        "finished": "2023-01-01 01:10:00",
+        "duration": "10m"
     }
 }
 

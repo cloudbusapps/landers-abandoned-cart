@@ -1,0 +1,23 @@
+{
+    "status": "Incomplete",
+    "message": "2 record(s) were processed successfully and 1 record(s) encountered errors.",
+    "data": {
+        "total_records": 3,
+        "successful_records": 2,
+        "failed_records": 1,
+        "errors": [
+            {
+                "index": 1,
+                "subscriber_key": "landersph-20240509073455-1",
+                "email_address": "johndoe@gmail",
+                "message": "Invalid email address"
+            }
+        ]
+    },
+    "execution": {
+        "started": "2024-05-09 15:34:53",
+        "finished": "2024-05-09 15:34:58",
+        "duration": "5s"
+    }
+}
+
