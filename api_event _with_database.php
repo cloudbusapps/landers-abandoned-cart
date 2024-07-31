@@ -12,6 +12,8 @@
         $datetime = $datetime->format('Y-m-d H:i:s');
         return $datetime;
     }
+    $start_datetime = get_current_datetime();
+    $end_datetime = get_current_datetime();
 
 
     /**
@@ -70,6 +72,41 @@
     }
 
     /**
+     * Validates the HTTP headers for the API event.
+     *
+     * This function checks if the required headers are present and have valid values.
+     * If the headers are valid, it extracts the journey builder ID and event definition key.
+     *
+     * @return array An associative array with the following keys:
+     * - 'status': The status of the validation process. It can be either 'Success' or 'Failed'.
+     * - 'message': A message indicating the result of the validation process.
+     * - 'data': An associative array containing the validated journey builder ID and event definition key.
+     *   It is present only if the validation status is 'Success'.
+     */
+    function validate_headers() {
+        $headers = getallheaders();
+        if (!isset($headers['Content-Type']) || $headers['Content-Type'] != 'application/json' || !isset($headers['journey_builder_id']) || !isset($headers['event_definition_key'])) {
+            return [
+                'status' => 'Failed',
+                'message' => 'Invalid header values',
+            ];
+        }
+
+        $journey_builder_id = $headers['journey_builder_id'];
+        $journey_builder_id = substr($journey_builder_id, 2);
+        $headers['journey_builder_id'] = $journey_builder_id;
+
+        return [
+            'status' => 'Success',
+            'message' => 'Headers validated',
+            'data' => [
+                'journey_builder_id' => $headers['journey_builder_id'],
+                'event_definition_key' => $headers['event_definition_key'],
+            ]
+        ];
+    }
+
+    /**
      * The function `validate_payload` checks if a JSON payload contains the required keys and data,
      * and returns a status and message indicating if the payload is valid or not.
      * 
@@ -78,19 +115,26 @@
      * - message: A message indicating the result of the payload validation.
      * - payload: The payload that was validated.
      */
-    function validate_payload($data = []) {
-        // $data = json_decode(file_get_contents('php://input'), true);
-        if (!isset($data['journey_builder_id']) || !isset($data['label']) || !isset($data['event_definition_key']) || !isset($data['data']) || !is_array($data['data']) || count($data['data']) == 0) {
+    function validate_payload() {
+        $data = json_decode(file_get_contents('php://input'), true);
+        if (!isset($data['label']) || !isset($data['data']) || !is_array($data['data'])) {
             return [
                 'status' => 'Failed',
-                'message' => "Invalid payload. Make sure to include 'journey_builder_id', 'label', 'event_definition_key', and 'data'"
+                'message' => "Invalid payload. Make sure to include 'label' and 'data'"
+            ];
+        } 
+        else if (count($data['data']) == 0) {
+            return [
+                'status' => 'Failed',
+                'message' => "Invalid payload. Make sure to include 'data'"
             ];
         }
-
-        $journey_builder_id = $data['journey_builder_id'];
-        $journey_builder_id = substr($journey_builder_id, 2);
-        unset($data['journey_builder_id']);
-        $data['journey_builder_id'] = $journey_builder_id;
+        else if (count($data['data']) > 200) {
+            return [
+                'status' => 'Failed',
+                'message' => "Invalid payload. Maximum of 200 records allowed"
+            ];
+        }
 
         return [
             'status' => 'Success',
@@ -179,44 +223,43 @@
      * @return an array with the following structure:
      * - status: The status of the event processing. ("Success" or "Failed")
      * - message: A message indicating the result of the event processing.
-     * - data - total_count: The total count of events processed.
-     * - data - success_count: The count of successful events processed.
-     * - data - failed_count: The count of failed events processed.
+     * - data - total_records: The total count of events processed.
+     * - data - successful_records: The count of successful events processed.
+     * - data - failed_records: The count of failed events processed.
      * - data - errors: An array of errors encountered during the event processing.
      */
-    function process($mc_token = '', $data = []) {
+    function process($mc_token = '', $journey_builder_id = '', $event_definition_key = '', $data = []) {
         global $sub_domain;
 
         $is_error = false;
         $errors = [];
 
-        $total_count = $success_count = $failed_count = 0;
-
-        $journey_builder_id = $data['payload']['journey_builder_id'];
-        $event_definition_key = $data['payload']['event_definition_key'];
+        $total_records = $successful_records = $failed_records = 0;
         $payload_data = $data['payload']['data'];
         
-
         $validate_journey = validate_journey_builder($mc_token, $journey_builder_id);
         if ($validate_journey['status'] == 'Failed') {
             return $validate_journey;
         }
 
         $curl = curl_init();
+        $YmdHis = date('YmdHis');
         foreach ($payload_data as $key => $value) {
 
-            $contact_key = 'landers.ph-' . date('YmdHis');
-            $payload_data[$key]['subscriber_key'] = $contact_key;
+            $contact_key = 'landersph-' . $YmdHis . '-' . $key;
+            $payload_data[$key]['subscriber_key'] = $contact_key; // required!
 
             if (!validate_email($payload_data[$key]['email_address'])) {
                 $is_error = true;
                 $errors[] = [
-                    'email_address' => $payload_data[$key]['email_address'],
-                    'error_message' => 'Invalid email address'
+                    'index'          => $key,
+                    'subscriber_key' => $contact_key,
+                    'message'        => 'Invalid email address',
+                    'data'           => $payload_data[$key],
                 ];
 
-                $failed_count++;
-                $total_count++;
+                $failed_records++;
+                $total_records++;
                 continue;
             }
 
@@ -239,34 +282,38 @@
                 if (isset($resp->errorcode)) {
                     $is_error = true;
                     $errors[] = [
-                        'email_address' => $payload_data[$key]['email_address'] ?? 'None',
-                        'error_message' => $resp->message,
+                        'index'          => $key,
+                        'subscriber_key' => $contact_key,
+                        'message'        => $resp->message,
+                        'data'           => $payload_data[$key],
                     ];
 
-                    $failed_count++;
+                    $failed_records++;
                 } 
                 else {
-                    $success_count++;
+                    $successful_records++;
                 }
             } 
             catch (\Exception $ex) {
                 $is_error = true;
                 $errors[] = [
-                    'email_address' => $payload_data[$key]['email_address'] ?? 'None',
-                    'error_message' => $ex->getMessage()
+                    'index'          => $key,
+                    'subscriber_key' => $contact_key,
+                    'message'        => $ex->getMessage(),
+                    'data'           => $payload_data[$key],
                 ];
 
-                $failed_count++;
+                $failed_records++;
             }
 
-            $total_count++;
+            $total_records++;
         }
 
         curl_close($curl);
 
         if ($is_error) {
-            $status = $success_count > 0 ? 'Partial Success' : 'Failed';
-            $message = $success_count > 0 ? 'Some operations were completed successfully while others encountered errors.' : 'API Event processing failed';
+            $status = $successful_records > 0 ? 'Partial Success' : 'Failed';
+            $message = $successful_records > 0 ? 'Some operations were completed successfully while others encountered errors.' : 'API Event processing failed';
         }
         else {
             $status = 'Success';
@@ -277,129 +324,15 @@
             'status' => $status,
             'message' => $message,
             'data' => [
-                'total_count'   => $total_count,
-                'success_count' => $success_count,
-                'failed_count'  => $failed_count,
+                'total_records'   => $total_records,
+                'successful_records' => $successful_records,
+                'failed_records'  => $failed_records,
                 'errors'        => $errors
-            ]
+            ],
+            'payload' => $payload_data
         ];
 
         return $output;
-    }
-
-
-    function extract_error_message($str = '') {
-        // Define the regular expression pattern
-        $pattern = '/Message:(Error Code: \d+ - .*?)(?=;Parameters:|$)/';
-
-        // Perform the regular expression match
-        preg_match($pattern, $str, $matches);
-
-        // Extract the error message from the matches array
-        if (isset($matches[1])) {
-            $result = trim($matches[1]); // Trim any leading or trailing whitespace
-            $result = explode(' - ', $result);
-            return $result[1];
-        }
-
-        return null; // Error message not found
-    }
-
-    function convert_text_to_json($text = '') {   
-        if (empty($text)) return null;
-        
-        // Split the data into lines
-        $lines = explode("\n", trim($text));
-        
-        // Remove the header line
-        $header = array_shift($lines);
-        $header = explode(",", trim($header));
-
-        // Initialize an array to hold the converted data
-        $convertedData = [];
-
-        // Iterate over the lines and convert each line to an associative array
-        foreach ($lines as $line) {
-            // Split the line into fields
-            $fields = str_getcsv($line);
-
-            // Combine the header fields with the current line fields
-            $record = array_combine($header, $fields);
-
-            // Add the record to the converted data array
-            $convertedData[] = $record;
-        }
-
-        foreach ($convertedData as $key => $value) {
-            $convertedData[$key]['Message'] = extract_error_message($value['Result.Messages']);
-            unset($convertedData[$key]['Result.Messages']);
-        }
-
-        // Output the JSON data
-        return $convertedData;
-    }
-
-    function get_failed_sendout($mc_token = '', $journey_builder_id = '') {
-        $data = [];
-        global $sub_domain;
-
-        // Create a DateTime object for the current time
-        // $current_datetime = new DateTime();
-        // $current_datetime->setTimezone(new DateTimeZone('Asia/Manila'));
-        $current_datetime = new DateTime();
-        $current_datetime->sub(new DateInterval('PT1H'));
-        $start_date = $current_datetime->format('Y-m-d\TH:i:s\Z');
-
-        // Create a copy of the start DateTime object and add 1 hour for end date
-        $end_date = new DateTime();
-        $end_date = $end_date->format('Y-m-d\TH:i:s\Z');
-        /** Get the status failed one hour before */
-    
-        try {
-            $headers = [
-                'Content-Type: application/json',
-                'Authorization: Bearer ' . $mc_token,
-                'x-direct-pipe: true'
-            ];
-
-            $columns = [
-                'TransactionTime', 
-                'ContactKey',
-                'Result.Messages'
-            ];
-    
-            $body = [
-                "definitionIds" => [$journey_builder_id],
-                'statuses' => ['failed'],
-                "start" => $start_date,
-                "end" => $end_date
-            ];
-
-            $curl = curl_init();
-            curl_setopt($curl, CURLOPT_URL, $sub_domain . '.rest.marketingcloudapis.com/interaction/v1/interactions/journeyhistory/download?columns='.implode(',', $columns));
-            curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($curl, CURLOPT_POST, true);
-            curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
-            curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($body));
-            $response = curl_exec($curl);
-
-            if (curl_errno($curl)) {
-                $data['status'] = 'Failed';
-                $data['message'] = 'Unable to connect: '. curl_error($curl);
-            } else {
-                $data['status'] = 'Success';
-                $data['message'] = 'Journey Builder found';
-                $data['data'] = convert_text_to_json($response);
-            }
-
-            curl_close($curl);
-            
-        } catch (\Throwable $th) {
-            $data['status'] = 'Failed';
-            $data['message'] = $th->getMessage();
-        }
-
-        return $data;
     }
 
     function get_total_execution_time($start_datetime = '', $end_datetime = '') {
@@ -430,13 +363,32 @@
     }
 
 
-    // ***** API EVENT *****
-    function api_event($payload) {
-        $start_datetime = get_current_datetime();
+    function get_data_from_failed_sendout($payload_data = [], $subscriber_key = '') {
+        foreach ($payload_data as $key => $data) {
+            if ($data['subscriber_key'] == $subscriber_key) {
+                return [
+                    'index' => $key,
+                    'subscriber_key' => $data['subscriber_key'],
+                    'message' => $data['Message'],
+                    'data' => $data
+                ];
+            }
+        }
+        return null; // If subscriber_key not found
+    }
 
-        $output = [];
-        // if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-        if (true) {
+
+    // ***** API EVENT *****
+    $output = [];
+    if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+        $headers = validate_headers();
+        if ($headers['status'] != 'Success') {
+            $output = $headers;
+        }
+        else {
+            $journey_builder_id = $headers['data']['journey_builder_id'];
+            $event_definition_key = $headers['data']['event_definition_key'];
+
             $auth = authenticate();
             if ($auth['status'] != 'Success') {
                 $output = $auth;
@@ -444,37 +396,31 @@
             else {
                 $mc_token = $auth['token'];
     
-                $validate = validate_payload($payload);
+                $validate = validate_payload();
                 if ($validate['status'] != 'Success') {
                     $output = $validate;   
                 }
                 else {
-                    $journey_builder_id = $validate['payload']['journey_builder_id'] ?? '';
-    
                     $data = $validate;
-                    $output = process($mc_token, $data);
-    
-                    $failed_sendout = get_failed_sendout($mc_token, $journey_builder_id);
-                    if (isset($failed_sendout['data']) && count($failed_sendout['data']) > 0) {
-                        $output['failed_sendout'] = $failed_sendout['data'];
-                    }
+                    $output = process($mc_token, $journey_builder_id, $event_definition_key, $data);
                 }
             }
-        } 
-        else {
-            $output['status'] = 'Failed';
-            $output['message'] = 'Invalid request';
-        }   
-    
-        $end_datetime = get_current_datetime();
-        $output['execution'] = [
-            'started' => $start_datetime,
-            'finished' => $end_datetime,
-            'duration' => get_total_execution_time($start_datetime, $end_datetime)
-        ];
-        // header('Content-Type: application/json; charset=utf-8');
-        return $output;
-    }
+        }
+    } 
+    else {
+        $output['status'] = 'Failed';
+        $output['message'] = 'Invalid request';
+    }   
+
+    // unset($output['payload']);
+    $end_datetime = get_current_datetime();
+    $output['execution'] = [
+        'started'  => $start_datetime,
+        'finished' => $end_datetime,
+        'duration' => get_total_execution_time($start_datetime, $end_datetime)
+    ];
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($output);
     // ***** / API EVENT *****
     
     

@@ -1,5 +1,5 @@
 {
-    "status": "Incomplete",
+    "status": "Partial Success",
     "message": "2 record(s) were processed successfully and 1 record(s) encountered errors.",
     "data": {
         "total_records": 3,
